@@ -100,8 +100,12 @@ export default function SettlementsTable({ currencyTable }: { currencyTable: Cur
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify(nextRecords));
   }
 
+  function clearSettlements() {
+    if (window.confirm(t("clearConfirm"))) persist([]);
+  }
+
   function exportCsv() {
-    const headers = [t("csvSubject"), t("csvExpenseDate"), t("csvAmount"), t("csvCurrency"), t("csvRate"), t("csvRateDate"), t("csvTable"), t("csvResult")];
+    const headers = ["name", "expenseDate", "amount", "currencyCode", "rate", "rateDate", "tableNo", "result"];
     const rows = records.map((record) => [record.name, record.expenseDate, record.amount.replace(",", "."), record.currencyCode, record.rate, record.rateDate, record.tableNo, record.result.toFixed(2)]);
     const csv = [headers, ...rows].map((row) => row.map(escapeCsvValue).join(",")).join("\r\n");
     const blob = new Blob(["\uFEFF", csv], { type: "text/csv;charset=utf-8;" });
@@ -124,6 +128,8 @@ export default function SettlementsTable({ currencyTable }: { currencyTable: Cur
     setImportMessage("");
     try {
       const rows = parseCsv(await file.text());
+      const expectedHeaders = ["name", "expenseDate", "amount", "currencyCode", "rate", "rateDate", "tableNo", "result"];
+      if (rows.length === 0 || rows[0].length !== expectedHeaders.length || rows[0].some((header, index) => header.replace(/^\uFEFF/, "") !== expectedHeaders[index])) throw new Error(t("importError"));
       const importedRecords = rows.slice(1).map((row): SettlementRecord | null => {
         if (row.length !== 8) return null;
         const [recordName, recordExpenseDate, recordAmount, recordCurrency, recordRate, recordRateDate, recordTable, recordResult] = row;
@@ -190,6 +196,7 @@ export default function SettlementsTable({ currencyTable }: { currencyTable: Cur
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 px-5 py-4 dark:border-slate-700 sm:px-6"><div><h2 className="text-xl font-semibold">{t("savedSettlements")}</h2><p className="mt-1 text-sm text-slate-600 dark:text-slate-300">{t("localStorageHelp")}</p></div><div className="flex flex-wrap gap-2"><button type="button" disabled={records.length === 0} onClick={exportCsv} className="min-h-10 rounded-md border border-blue-700 px-4 py-2 text-sm font-semibold text-blue-700 transition hover:bg-blue-50 disabled:cursor-not-allowed disabled:opacity-40 dark:border-blue-300 dark:text-blue-200 dark:hover:bg-blue-950">{t("exportCsv")}</button><button type="button" onClick={() => fileInputRef.current?.click()} className="min-h-10 rounded-md bg-blue-700 px-4 py-2 text-sm font-semibold text-white transition hover:bg-blue-800 dark:bg-blue-600 dark:hover:bg-blue-500">{t("importCsv")}</button><input ref={fileInputRef} type="file" accept=".csv,text/csv" className="hidden" onChange={handleImport} /></div></div>
         {importMessage && <p className="border-b border-emerald-200 bg-emerald-50 px-5 py-3 text-sm text-emerald-800 dark:border-emerald-900 dark:bg-emerald-950/40 dark:text-emerald-200" role="status">{importMessage}</p>}
         {records.length === 0 ? <p className="px-5 py-8 text-center text-slate-600 dark:text-slate-300">{t("emptySettlements")}</p> : <div className="overflow-x-auto"><table className="min-w-full text-left text-sm"><thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500 dark:bg-slate-800/60 dark:text-slate-400"><tr><th className="px-5 py-3">{t("subject")}</th><th className="px-5 py-3">{t("expense")}</th><th className="px-5 py-3">{t("rate")}</th><th className="px-5 py-3">{t("result")}</th><th className="px-5 py-3"><span className="sr-only">{t("actions")}</span></th></tr></thead><tbody className="divide-y divide-slate-200 dark:divide-slate-700">{records.map((record) => <tr key={record.id}><td className="whitespace-nowrap px-5 py-4 font-medium">{record.name}</td><td className="whitespace-nowrap px-5 py-4">{record.amount} {record.currencyCode}<span className="block text-xs text-slate-500">{dateFormat.format(new Date(`${record.expenseDate}T00:00:00Z`))}</span></td><td className="whitespace-nowrap px-5 py-4">{rateFormat.format(record.rate)}<span className="block text-xs text-slate-500">{record.tableNo} · {dateFormat.format(new Date(`${record.rateDate}T00:00:00Z`))}</span></td><td className="whitespace-nowrap px-5 py-4 font-semibold text-blue-800 dark:text-blue-200">{amountFormat.format(record.result)}</td><td className="px-5 py-4 text-right"><button type="button" className="text-sm font-medium text-red-700 hover:underline dark:text-red-300" onClick={() => persist(records.filter((item) => item.id !== record.id))}>{t("remove")}</button></td></tr>)}</tbody></table></div>}
+        <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-200 px-5 py-4 dark:border-slate-700 sm:px-6"><p className="font-semibold">{t("totalPln")}: <span className="text-blue-800 dark:text-blue-200">{amountFormat.format(records.reduce((total, record) => total + record.result, 0))}</span></p><button type="button" disabled={records.length === 0} onClick={clearSettlements} className="min-h-10 rounded-md border border-red-700 px-4 py-2 text-sm font-semibold text-red-700 transition hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-40 dark:border-red-300 dark:text-red-200 dark:hover:bg-red-950">{t("clear")}</button></div>
       </section>
     </div>
   );
