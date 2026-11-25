@@ -1,5 +1,4 @@
 import { Rate } from "@/types";
-import { CONFIG_FILES } from "next/dist/shared/lib/constants";
 import React, { useState } from "react";
 import { Button } from "./Button";
 

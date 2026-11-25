@@ -1,12 +1,19 @@
-import Image from 'next/image'
+"use client";
 
-const Hero = () => {
+import Image from "next/image";
+import { useLanguage } from "@/lib/i18n";
+
+export default function Hero() {
+  const { locale } = useLanguage();
   return (
-    <div className="flex items-center justify-center h-80 w-full relative bg-fixed bg-center">
-        <Image src="/finance.jpg" alt='test' fill/>
-        <h2 className="relative mt-10  text-8xl text-center text-white z-10">Check Rate!</h2>
+    <div className="relative h-28 overflow-hidden bg-slate-900 sm:h-40">
+      <Image src="/finance.jpg" alt="" fill sizes="100vw" className="object-cover opacity-60" />
+      <div className="absolute inset-0 bg-gradient-to-r from-slate-950/80 via-slate-900/30 to-blue-950/70" />
+      <div className="relative mx-auto flex h-full max-w-5xl items-center px-5 sm:px-8">
+        <p className="max-w-md text-sm font-medium tracking-wide text-white/90 sm:text-base">
+          {locale === "pl" ? "Proste i szybkie przeliczanie walut według kursów NBP." : "Simple and fast currency conversion using NBP rates."}
+        </p>
+      </div>
     </div>
-  )
+  );
 }
-
-export default Hero
