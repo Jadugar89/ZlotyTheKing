@@ -1,6 +1,6 @@
 "use client";
 
-import { startTransition, useEffect, useMemo, useState } from "react";
+import { startTransition, useEffect, useMemo, useRef, useState } from "react";
 import { convertToPln, getStoredCurrency, prioritizeRates, sanitizeAmountInput, storeCurrency } from "@/lib/currency";
 import { useLanguage } from "@/lib/i18n";
 import { useUnsavedChangesWarning } from "@/lib/useUnsavedChangesWarning";
@@ -26,6 +26,44 @@ function loadSettlements(): SettlementRecord[] {
   } catch { return []; }
 }
 
+function escapeCsvValue(value: string | number) {
+  const text = String(value);
+  return /[",\r\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+}
+
+function parseCsv(text: string) {
+  const rows: string[][] = [];
+  let row: string[] = [];
+  let value = "";
+  let quoted = false;
+
+  for (let index = 0; index < text.length; index += 1) {
+    const character = text[index];
+    const nextCharacter = text[index + 1];
+    if (character === '"' && quoted && nextCharacter === '"') {
+      value += '"';
+      index += 1;
+    } else if (character === '"') {
+      quoted = !quoted;
+    } else if (character === "," && !quoted) {
+      row.push(value);
+      value = "";
+    } else if ((character === "\n" || character === "\r") && !quoted) {
+      if (character === "\r" && nextCharacter === "\n") index += 1;
+      row.push(value);
+      if (row.some((cell) => cell.length > 0)) rows.push(row);
+      row = [];
+      value = "";
+    } else {
+      value += character;
+    }
+  }
+
+  row.push(value);
+  if (row.some((cell) => cell.length > 0)) rows.push(row);
+  return rows;
+}
+
 export default function SettlementsTable({ currencyTable }: { currencyTable: CurrencyTable }) {
   const { locale, t } = useLanguage();
   const rates = useMemo(() => prioritizeRates(currencyTable.rates), [currencyTable.rates]);
@@ -36,7 +74,9 @@ export default function SettlementsTable({ currencyTable }: { currencyTable: Cur
   const [currencyReady, setCurrencyReady] = useState(false);
   const [expenseDate, setExpenseDate] = useState(today);
   const [error, setError] = useState("");
+  const [importMessage, setImportMessage] = useState("");
   const [isSaving, setIsSaving] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const todayDate = today();
   useUnsavedChangesWarning(name.trim() !== "" || amount.trim() !== "");
   const dateFormat = new Intl.DateTimeFormat(locale === "pl" ? "pl-PL" : "en-GB", { dateStyle: "medium", timeZone: "UTC" });
@@ -58,6 +98,50 @@ export default function SettlementsTable({ currencyTable }: { currencyTable: Cur
   function persist(nextRecords: SettlementRecord[]) {
     setRecords(nextRecords);
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify(nextRecords));
+  }
+
+  function exportCsv() {
+    const headers = [t("csvSubject"), t("csvExpenseDate"), t("csvAmount"), t("csvCurrency"), t("csvRate"), t("csvRateDate"), t("csvTable"), t("csvResult")];
+    const rows = records.map((record) => [record.name, record.expenseDate, record.amount.replace(",", "."), record.currencyCode, record.rate, record.rateDate, record.tableNo, record.result.toFixed(2)]);
+    const csv = [headers, ...rows].map((row) => row.map(escapeCsvValue).join(",")).join("\r\n");
+    const blob = new Blob(["\uFEFF", csv], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `zloty-the-king-${today()}.csv`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+  }
+
+  async function handleImport(event: React.ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+
+    setError("");
+    setImportMessage("");
+    try {
+      const rows = parseCsv(await file.text());
+      const importedRecords = rows.slice(1).map((row): SettlementRecord | null => {
+        if (row.length !== 8) return null;
+        const [recordName, recordExpenseDate, recordAmount, recordCurrency, recordRate, recordRateDate, recordTable, recordResult] = row;
+        const normalizedAmount = recordAmount.replace(",", ".");
+        const amount = convertToPln(normalizedAmount, 1);
+        const rate = Number(recordRate.replace(",", "."));
+        const result = Number(recordResult.replace(",", "."));
+        const validDate = /^\d{4}-\d{2}-\d{2}$/.test(recordExpenseDate) && /^\d{4}-\d{2}-\d{2}$/.test(recordRateDate);
+        if (!recordName.trim() || amount === null || !Number.isFinite(rate) || rate <= 0 || !Number.isFinite(result) || !validDate || !/^[A-Z]{3}$/.test(recordCurrency) || !recordTable.trim()) return null;
+        return { id: crypto.randomUUID(), name: recordName.trim(), amount: normalizedAmount, currencyCode: recordCurrency, expenseDate: recordExpenseDate, rateDate: recordRateDate, tableNo: recordTable, rate, result: amount * rate };
+      });
+      const validRecords = importedRecords.filter((record): record is SettlementRecord => record !== null);
+      if (validRecords.length === 0 || validRecords.length !== importedRecords.length) throw new Error(t("importError"));
+      persist([...validRecords, ...records]);
+      setImportMessage(t("importSuccess").replace("{count}", String(validRecords.length)));
+    } catch (importError) {
+      setError(importError instanceof Error ? importError.message : t("importError"));
+    }
   }
 
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
@@ -103,7 +187,8 @@ export default function SettlementsTable({ currencyTable }: { currencyTable: Cur
         </form>
       </section>
       <section className="rounded-xl border border-slate-300 bg-white shadow-sm dark:border-slate-700 dark:bg-slate-900">
-        <div className="border-b border-slate-200 px-5 py-4 dark:border-slate-700 sm:px-6"><h2 className="text-xl font-semibold">{t("savedSettlements")}</h2><p className="mt-1 text-sm text-slate-600 dark:text-slate-300">{t("localStorageHelp")}</p></div>
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 px-5 py-4 dark:border-slate-700 sm:px-6"><div><h2 className="text-xl font-semibold">{t("savedSettlements")}</h2><p className="mt-1 text-sm text-slate-600 dark:text-slate-300">{t("localStorageHelp")}</p></div><div className="flex flex-wrap gap-2"><button type="button" disabled={records.length === 0} onClick={exportCsv} className="min-h-10 rounded-md border border-blue-700 px-4 py-2 text-sm font-semibold text-blue-700 transition hover:bg-blue-50 disabled:cursor-not-allowed disabled:opacity-40 dark:border-blue-300 dark:text-blue-200 dark:hover:bg-blue-950">{t("exportCsv")}</button><button type="button" onClick={() => fileInputRef.current?.click()} className="min-h-10 rounded-md bg-blue-700 px-4 py-2 text-sm font-semibold text-white transition hover:bg-blue-800 dark:bg-blue-600 dark:hover:bg-blue-500">{t("importCsv")}</button><input ref={fileInputRef} type="file" accept=".csv,text/csv" className="hidden" onChange={handleImport} /></div></div>
+        {importMessage && <p className="border-b border-emerald-200 bg-emerald-50 px-5 py-3 text-sm text-emerald-800 dark:border-emerald-900 dark:bg-emerald-950/40 dark:text-emerald-200" role="status">{importMessage}</p>}
         {records.length === 0 ? <p className="px-5 py-8 text-center text-slate-600 dark:text-slate-300">{t("emptySettlements")}</p> : <div className="overflow-x-auto"><table className="min-w-full text-left text-sm"><thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500 dark:bg-slate-800/60 dark:text-slate-400"><tr><th className="px-5 py-3">{t("subject")}</th><th className="px-5 py-3">{t("expense")}</th><th className="px-5 py-3">{t("rate")}</th><th className="px-5 py-3">{t("result")}</th><th className="px-5 py-3"><span className="sr-only">{t("actions")}</span></th></tr></thead><tbody className="divide-y divide-slate-200 dark:divide-slate-700">{records.map((record) => <tr key={record.id}><td className="whitespace-nowrap px-5 py-4 font-medium">{record.name}</td><td className="whitespace-nowrap px-5 py-4">{record.amount} {record.currencyCode}<span className="block text-xs text-slate-500">{dateFormat.format(new Date(`${record.expenseDate}T00:00:00Z`))}</span></td><td className="whitespace-nowrap px-5 py-4">{rateFormat.format(record.rate)}<span className="block text-xs text-slate-500">{record.tableNo} · {dateFormat.format(new Date(`${record.rateDate}T00:00:00Z`))}</span></td><td className="whitespace-nowrap px-5 py-4 font-semibold text-blue-800 dark:text-blue-200">{amountFormat.format(record.result)}</td><td className="px-5 py-4 text-right"><button type="button" className="text-sm font-medium text-red-700 hover:underline dark:text-red-300" onClick={() => persist(records.filter((item) => item.id !== record.id))}>{t("remove")}</button></td></tr>)}</tbody></table></div>}
       </section>
     </div>
